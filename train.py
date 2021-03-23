@@ -1,4 +1,6 @@
 import argparse
+
+import gc
 import tensorflow as tf
 import os
 import sys
@@ -26,7 +28,11 @@ parser.add_argument('--num-epochs', default=120, type=int)
 parser.add_argument('--checkpoint-dir', default='checkpoints')
 parser.add_argument('--pretrained-type', default='base')
 parser.add_argument('--gpu-id', default='0')
-
+parser.add_argument('--augment-type', nargs='+', help='Augmentation types', choices=['flip', 'patch'])
+parser.add_argument('--caching-period', help='Caching period. 0 for no caching, -1 for cache once and reuse.',
+                    type=int, default=0)
+parser.add_argument('--snapshot-path', help='Path to folder to put snapshots.')
+parser.add_argument('--tag', help='tag.')
 args = parser.parse_args()
 
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
@@ -54,6 +60,12 @@ def train_step(imgs, gt_confs, gt_locs, ssd, criterion, optimizer):
 
 
 if __name__ == '__main__':
+    print(args)
+
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    for gpu in gpus:
+        tf.config.experimental.set_memory_growth(gpu, True)
+
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
     with open('./config.yml') as f:
@@ -70,7 +82,10 @@ if __name__ == '__main__':
         args.data_dir, args.data_year, default_boxes,
         config['image_size'],
         args.batch_size, args.num_batches,
-        mode='train', augmentation=['flip'])  # the patching algorithm is currently causing bottleneck sometimes
+        mode='train',
+        augmentation=args.augment_type,
+        caching_period=args.caching_period,
+        snapshot_path=args.snapshot_path)  # the patching algorithm is currently causing bottleneck sometimes
     
     try:
         ssd = create_ssd(NUM_CLASSES, args.arch,
@@ -94,8 +109,8 @@ if __name__ == '__main__':
         learning_rate=lr_fn,
         momentum=args.momentum)
 
-    train_log_dir = 'logs/train'
-    val_log_dir = 'logs/val'
+    train_log_dir = f'logs/{args.tag}/train'
+    val_log_dir = f'logs/{args.tag}/val'
     train_summary_writer = tf.summary.create_file_writer(train_log_dir)
     val_summary_writer = tf.summary.create_file_writer(val_log_dir)
 
@@ -113,10 +128,13 @@ if __name__ == '__main__':
             if (i + 1) % 50 == 0:
                 print('Epoch: {} Batch {} Time: {:.2}s | Loss: {:.4f} Conf: {:.4f} Loc: {:.4f}'.format(
                     epoch + 1, i + 1, time.time() - start, avg_loss, avg_conf_loss, avg_loc_loss))
-
+        gc.collect()
+        epoch_train_time = time.time() - start
+        print(f"epoch train time: {epoch},{epoch_train_time}")
         avg_val_loss = 0.0
         avg_val_conf_loss = 0.0
         avg_val_loc_loss = 0.0
+        start = time.time()
         for i, (_, imgs, gt_confs, gt_locs) in enumerate(val_generator):
             val_confs, val_locs = ssd(imgs)
             val_conf_loss, val_loc_loss = criterion(
@@ -125,16 +143,18 @@ if __name__ == '__main__':
             avg_val_loss = (avg_val_loss * i + val_loss.numpy()) / (i + 1)
             avg_val_conf_loss = (avg_val_conf_loss * i + val_conf_loss.numpy()) / (i + 1)
             avg_val_loc_loss = (avg_val_loc_loss * i + val_loc_loss.numpy()) / (i + 1)
-
+        epoch_val_time = time.time() - start
         with train_summary_writer.as_default():
             tf.summary.scalar('loss', avg_loss, step=epoch)
             tf.summary.scalar('conf_loss', avg_conf_loss, step=epoch)
             tf.summary.scalar('loc_loss', avg_loc_loss, step=epoch)
+            tf.summary.scalar('time', epoch_train_time, step=epoch)
 
         with val_summary_writer.as_default():
             tf.summary.scalar('loss', avg_val_loss, step=epoch)
             tf.summary.scalar('conf_loss', avg_val_conf_loss, step=epoch)
             tf.summary.scalar('loc_loss', avg_val_loc_loss, step=epoch)
+            tf.summary.scalar('time', epoch_val_time, step=epoch)
 
         if (epoch + 1) % 10 == 0:
             ssd.save_weights(

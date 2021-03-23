@@ -148,10 +148,34 @@ class VOCDataset():
             yield filename, img, gt_confs, gt_locs
 
 
+def add_periodic_caching(dataset, period, dataset_id, snapshot_path):
+    snapshot_path = snapshot_path + "snapshot-{}-{:02d}"
+    for ep in range(3):
+        d = dataset.apply(tf.data.experimental.snapshot(snapshot_path.format(dataset_id, ep)))
+        d = d.repeat(period)
+        if ep == 0:
+            dataset_snapshot = d
+        else:
+            dataset_snapshot = dataset_snapshot.concatenate(d)
+    return dataset_snapshot
+
+
 def create_batch_generator(root_dir, year, default_boxes,
                            new_size, batch_size, num_batches,
                            mode,
-                           augmentation=None):
+                           augmentation=None, caching_period=0, snapshot_path=None):
+    """
+    :param root_dir:
+    :param year:
+    :param default_boxes:
+    :param new_size:
+    :param batch_size:
+    :param num_batches:
+    :param mode:
+    :param augmentation:
+    :param caching_period: -1 for cache once and reuse, 0 for don't cache, >0 for periodic caching
+    :return:
+    """
     num_examples = batch_size * num_batches if num_batches > 0 else -1
     voc = VOCDataset(root_dir, year, default_boxes,
                      new_size, num_examples, augmentation)
@@ -172,10 +196,21 @@ def create_batch_generator(root_dir, year, default_boxes,
         val_dataset = tf.data.Dataset.from_generator(
             val_gen, (tf.string, tf.float32, tf.int64, tf.float32))
 
-        train_dataset = train_dataset.shuffle(40).batch(batch_size)
-        val_dataset = val_dataset.batch(batch_size)
+        train_dataset = train_dataset.shuffle(40).batch(batch_size).take(num_batches)
+        val_dataset = val_dataset.batch(batch_size).take(-1)
 
-        return train_dataset.take(num_batches), val_dataset.take(-1), info
+        if caching_period == -1:
+            assert snapshot_path
+            snapshot_path = snapshot_path + "/snapshot"
+            train_dataset = train_dataset.apply(tf.data.experimental.snapshot(snapshot_path))
+            # Do not do cache valiation to get reliable validation results.
+            # val_dataset = val_dataset.apply(tf.data.experimental.snapshot(snapshot_path))
+        elif caching_period >= 1:
+            assert snapshot_path
+            train_dataset = add_periodic_caching(train_dataset, caching_period, "train", snapshot_path)
+            # Do not do cache valiation to get reliable validation results.
+            # val_dataset = add_periodic_caching(val_dataset, caching_period, "val", snapshot_path)
+        return train_dataset, val_dataset, info
     else:
         dataset = tf.data.Dataset.from_generator(
             voc.generate, (tf.string, tf.float32, tf.int64, tf.float32))
