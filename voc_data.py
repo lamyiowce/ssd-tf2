@@ -44,6 +44,7 @@ class VOCDataset():
 
         self.train_ids = self.ids[:int(len(self.ids) * 0.75)]
         self.val_ids = self.ids[int(len(self.ids) * 0.75):]
+        self.current_ids = self.ids
 
         if augmentation == None:
             self.augmentation = ['original']
@@ -51,7 +52,7 @@ class VOCDataset():
             self.augmentation = augmentation + ['original']
 
     def __len__(self):
-        return len(self.ids)
+        return len(self.current_ids)
 
     def _get_image(self, index):
         """ Method to read image from file
@@ -118,10 +119,14 @@ class VOCDataset():
         """
         if subset == 'train':
             indices = self.train_ids
+            self.current_ids = self.train_ids
         elif subset == 'val':
             indices = self.val_ids
+            print(f"Len val ids: {len(self.val_ids)}")
+            self.current_ids = self.val_ids
         else:
             indices = self.ids
+            self.current_ids = self.ids
         for index in range(len(indices)):
             # img, orig_shape = self._get_image(index)
             filename = indices[index]
@@ -151,7 +156,7 @@ class VOCDataset():
 def add_periodic_caching(dataset, period, dataset_id, snapshot_path):
     snapshot_path = snapshot_path + "snapshot-{}-{:02d}"
     for ep in range(3):
-        d = dataset.apply(tf.data.experimental.snapshot(snapshot_path.format(dataset_id, ep)))
+        d = dataset.apply(tf.data.experimental.snapshot(snapshot_path.format(dataset_id, ep)), compression=None)
         d = d.repeat(period)
         if ep == 0:
             dataset_snapshot = d
@@ -202,7 +207,7 @@ def create_batch_generator(root_dir, year, default_boxes,
         if caching_period == -1:
             assert snapshot_path
             snapshot_path = snapshot_path + "/snapshot"
-            train_dataset = train_dataset.apply(tf.data.experimental.snapshot(snapshot_path))
+            train_dataset = train_dataset.apply(tf.data.experimental.snapshot(snapshot_path, compression=None))
             # Do not do cache valiation to get reliable validation results.
             # val_dataset = val_dataset.apply(tf.data.experimental.snapshot(snapshot_path))
         elif caching_period >= 1:
@@ -212,7 +217,11 @@ def create_batch_generator(root_dir, year, default_boxes,
             # val_dataset = add_periodic_caching(val_dataset, caching_period, "val", snapshot_path)
         return train_dataset, val_dataset, info
     else:
+        print(f"Mode: {mode}")
+        val_gen = partial(voc.generate, subset='val')
         dataset = tf.data.Dataset.from_generator(
-            voc.generate, (tf.string, tf.float32, tf.int64, tf.float32))
+            val_gen, (tf.string, tf.float32, tf.int64, tf.float32))
         dataset = dataset.batch(batch_size)
+        info['length'] = len(voc.val_ids)
+        print(f"Length of val set: {len(voc.val_ids)}")
         return dataset.take(num_batches), info

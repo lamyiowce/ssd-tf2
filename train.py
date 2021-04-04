@@ -111,8 +111,10 @@ if __name__ == '__main__':
 
     train_log_dir = f'logs/{args.tag}/train'
     val_log_dir = f'logs/{args.tag}/val'
+    total_log_dir = f'logs/{args.tag}/total'
     train_summary_writer = tf.summary.create_file_writer(train_log_dir)
     val_summary_writer = tf.summary.create_file_writer(val_log_dir)
+    total_summary_writer = tf.summary.create_file_writer(total_log_dir)
 
     for epoch in range(args.num_epochs):
         avg_loss = 0.0
@@ -130,7 +132,7 @@ if __name__ == '__main__':
                     epoch + 1, i + 1, time.time() - start, avg_loss, avg_conf_loss, avg_loc_loss))
         gc.collect()
         epoch_train_time = time.time() - start
-        print(f"epoch train time: {epoch},{epoch_train_time}")
+        print(f"epoch train time: {epoch}, {epoch_train_time}")
         avg_val_loss = 0.0
         avg_val_conf_loss = 0.0
         avg_val_loc_loss = 0.0
@@ -144,11 +146,15 @@ if __name__ == '__main__':
             avg_val_conf_loss = (avg_val_conf_loss * i + val_conf_loss.numpy()) / (i + 1)
             avg_val_loc_loss = (avg_val_loc_loss * i + val_loc_loss.numpy()) / (i + 1)
         epoch_val_time = time.time() - start
+        print(f"epoch train time: {epoch}, {epoch_val_time}")
         with train_summary_writer.as_default():
             tf.summary.scalar('loss', avg_loss, step=epoch)
             tf.summary.scalar('conf_loss', avg_conf_loss, step=epoch)
             tf.summary.scalar('loc_loss', avg_loc_loss, step=epoch)
             tf.summary.scalar('time', epoch_train_time, step=epoch)
+
+        with total_summary_writer.as_default():
+            tf.summary.scalar('time', epoch_train_time + epoch_val_time, step=epoch)
 
         with val_summary_writer.as_default():
             tf.summary.scalar('loss', avg_val_loss, step=epoch)

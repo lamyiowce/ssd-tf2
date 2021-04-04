@@ -24,6 +24,7 @@ parser.add_argument('--pretrained-type', default='specified')
 parser.add_argument('--checkpoint-dir', default='')
 parser.add_argument('--checkpoint-path', default='')
 parser.add_argument('--gpu-id', default='0')
+parser.add_argument('--tag', help='tag.')
 
 args = parser.parse_args()
 
@@ -103,9 +104,11 @@ if __name__ == '__main__':
         print('The program is exiting...')
         sys.exit()
 
-    os.makedirs('outputs/images', exist_ok=True)
-    os.makedirs('outputs/detects', exist_ok=True)
-    visualizer = ImageVisualizer(info['idx_to_name'], save_dir='outputs/images')
+    outputs_images = f'outputs/{args.tag}/images'
+    outputs_detects = f'outputs/{args.tag}/detects'
+    os.makedirs(outputs_images, exist_ok=True)
+    os.makedirs(outputs_detects, exist_ok=True)
+    visualizer = ImageVisualizer(info['idx_to_name'], save_dir=outputs_images)
 
     for i, (filename, imgs, gt_confs, gt_locs) in enumerate(
         tqdm(batch_generator, total=info['length'],
@@ -115,10 +118,11 @@ if __name__ == '__main__':
         original_image = Image.open(
             os.path.join(info['image_dir'], '{}.jpg'.format(filename)))
         boxes *= original_image.size * 2
-        visualizer.save_image(
-            original_image, boxes, classes, '{}.jpg'.format(filename))
+        if i < 30:
+            visualizer.save_image(
+                original_image, boxes, classes, '{}.jpg'.format(filename))
 
-        log_file = os.path.join('outputs/detects', '{}.txt')
+        log_file = os.path.join(outputs_detects, '{}.txt')
 
         for cls, box, score in zip(classes, boxes, scores):
             cls_name = info['idx_to_name'][cls - 1]

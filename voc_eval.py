@@ -2,6 +2,7 @@ import os
 import numpy as np
 import xml.etree.ElementTree as ET
 import argparse
+import tensorflow as tf
 
 
 parser = argparse.ArgumentParser()
@@ -9,17 +10,20 @@ parser.add_argument('--data-dir', default='../dataset')
 parser.add_argument('--data-year', default='2007')
 parser.add_argument('--detect-dir', default='./outputs/detects')
 parser.add_argument('--use-07-metric', type=bool, default=False)
+parser.add_argument('--epoch', type=int, help='epoch number')
+parser.add_argument('--tag', help='tag.')
 args = parser.parse_args()
 
 
 def get_annotation(anno_file):
     tree = ET.parse(anno_file)
+    # print(anno_file)
     objects = []
     for obj in tree.findall('object'):
         obj_struct = {}
         obj_struct['name'] = obj.find('name').text
         obj_struct['pose'] = obj.find('pose').text
-        obj_struct['truncated'] = int(obj.find('truncated').text)
+        obj_struct['truncated'] = int(obj.find('truncated').text if obj.find('truncated') else 0)
         obj_struct['difficult'] = int(obj.find('difficult').text)
         bbox = obj.find('bndbox')
         obj_struct['bbox'] = [int(bbox.find('xmin').text),
@@ -125,7 +129,7 @@ def voc_eval(det_path, anno_path, cls_name, iou_thresh=0.5, use_07_metric=False)
 
     fp = np.cumsum(fp)
     tp = np.cumsum(tp)
-    recall = tp / float(npos)
+    recall = tp / np.maximum(float(npos), np.finfo(np.float64).eps)
     precision = tp / np.maximum(tp + fp, np.finfo(np.float64).eps)
 
     ap = compute_ap(recall, precision, use_07_metric)
@@ -157,6 +161,11 @@ if __name__ == '__main__':
         'tvmonitor': 0.0,
         'mAP': []
     }
+
+    val_log_dir = f'logs/{args.tag}/val'
+    val_summary_writer = tf.summary.create_file_writer(val_log_dir)
+
+
     for cls_name in aps.keys():
         det_path = os.path.join(args.detect_dir, '{}.txt')
         anno_path = os.path.join(
@@ -171,5 +180,8 @@ if __name__ == '__main__':
             aps['mAP'].append(ap)
 
     aps['mAP'] = np.mean(aps['mAP'])
+    with val_summary_writer.as_default():
+        tf.summary.scalar('mAP', aps['mAP'], step=args.epoch)
+
     for key, value in aps.items():
         print('{}: {}'.format(key, value))
